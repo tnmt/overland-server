@@ -76,6 +76,9 @@ func parseTimestamp(s string) (time.Time, error) {
 // ToLocation converts a feature, using batchDeviceID when the feature's own
 // properties carry no device_id.
 func (f Feature) ToLocation(batchDeviceID string) (Location, error) {
+	if f.Type != "Feature" {
+		return Location{}, fmt.Errorf("unsupported feature type %q", f.Type)
+	}
 	if f.Geometry.Type != "Point" {
 		return Location{}, fmt.Errorf("unsupported geometry type %q", f.Geometry.Type)
 	}

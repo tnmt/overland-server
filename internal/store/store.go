@@ -15,7 +15,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS locations (
 	id                  INTEGER PRIMARY KEY,
 	device_id           TEXT    NOT NULL,
-	recorded_at         INTEGER NOT NULL,
+	recorded_at         INTEGER NOT NULL, -- Unix nanoseconds
 	latitude            REAL    NOT NULL,
 	longitude           REAL    NOT NULL,
 	altitude            REAL,
@@ -50,7 +50,33 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrateRecordedAt(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrateRecordedAt upgrades databases created before recorded_at used Unix
+// seconds. The range check prevents already-nanosecond values from being
+// multiplied if a database was created by a newer binary but has no version
+// marker yet.
+func migrateRecordedAt(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 1 {
+		return nil
+	}
+	if _, err := db.Exec(`
+UPDATE locations
+SET recorded_at = recorded_at * 1000000000
+WHERE recorded_at BETWEEN -4102444800 AND 4102444800`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`PRAGMA user_version = 1`)
+	return err
 }
 
 func (s *Store) Close() error {
@@ -89,7 +115,7 @@ INSERT OR IGNORE INTO locations (
 			motion = string(b)
 		}
 		res, err := stmt.ExecContext(ctx,
-			l.DeviceID, l.RecordedAt.Unix(), l.Latitude, l.Longitude, l.Altitude, l.Speed,
+			l.DeviceID, l.RecordedAt.UnixNano(), l.Latitude, l.Longitude, l.Altitude, l.Speed,
 			l.HorizontalAccuracy, l.VerticalAccuracy, motion, l.BatteryLevel,
 			nullIfEmpty(l.BatteryState), nullIfEmpty(l.Wifi), string(l.RawProperties), receivedAt.Unix(),
 		)

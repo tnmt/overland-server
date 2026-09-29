@@ -104,6 +104,7 @@ func TestIngestRejectsNonOverlandBodies(t *testing.T) {
 
 	for name, body := range map[string]string{
 		"malformed json":    "{",
+		"trailing json":     `{"locations":[]} {"locations":[]}`,
 		"missing locations": `{"_type":"location","lat":35.68,"lon":139.76,"tst":1790000000}`,
 		"null locations":    `{"locations":null}`,
 	} {

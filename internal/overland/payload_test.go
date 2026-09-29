@@ -56,6 +56,17 @@ func TestToLocation(t *testing.T) {
 	}
 }
 
+func TestToLocationRequiresFeatureType(t *testing.T) {
+	f := Feature{
+		Type:       "",
+		Geometry:   Geometry{Type: "Point", Coordinates: []float64{139, 35}},
+		Properties: json.RawMessage(`{"timestamp":"2026-09-29T01:02:03Z"}`),
+	}
+	if _, err := f.ToLocation(""); err == nil {
+		t.Fatal("expected missing feature type to be rejected")
+	}
+}
+
 func TestToLocationRejects(t *testing.T) {
 	cases := map[string]Feature{
 		"linestring":   {Geometry: Geometry{Type: "LineString", Coordinates: []float64{1, 2}}, Properties: json.RawMessage(`{"timestamp":"2026-09-29T01:02:03Z"}`)},
@@ -73,6 +84,7 @@ func TestToLocationRejects(t *testing.T) {
 func TestToLocationDeviceIDFallback(t *testing.T) {
 	feature := func(props string) Feature {
 		return Feature{
+			Type:       "Feature",
 			Geometry:   Geometry{Type: "Point", Coordinates: []float64{139.7671, 35.6812}},
 			Properties: json.RawMessage(props),
 		}
