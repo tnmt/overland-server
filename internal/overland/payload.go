@@ -12,6 +12,9 @@ import (
 
 type Batch struct {
 	Locations []Feature `json:"locations"`
+	// Some clients (e.g. Colota) send device_id once for the whole batch
+	// instead of inside each feature's properties.
+	DeviceID string `json:"device_id"`
 }
 
 type Feature struct {
@@ -70,7 +73,9 @@ func parseTimestamp(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized timestamp %q", s)
 }
 
-func (f Feature) ToLocation() (Location, error) {
+// ToLocation converts a feature, using batchDeviceID when the feature's own
+// properties carry no device_id.
+func (f Feature) ToLocation(batchDeviceID string) (Location, error) {
 	if f.Geometry.Type != "Point" {
 		return Location{}, fmt.Errorf("unsupported geometry type %q", f.Geometry.Type)
 	}
@@ -91,8 +96,13 @@ func (f Feature) ToLocation() (Location, error) {
 		return Location{}, err
 	}
 
+	deviceID := p.DeviceID
+	if deviceID == "" {
+		deviceID = batchDeviceID
+	}
+
 	return Location{
-		DeviceID:           p.DeviceID,
+		DeviceID:           deviceID,
 		RecordedAt:         ts,
 		Latitude:           lat,
 		Longitude:          lon,

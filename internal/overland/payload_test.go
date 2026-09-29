@@ -44,7 +44,7 @@ func TestToLocation(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatal(err)
 	}
-	loc, err := f.ToLocation()
+	loc, err := f.ToLocation("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +64,33 @@ func TestToLocationRejects(t *testing.T) {
 		"no timestamp": {Geometry: Geometry{Type: "Point", Coordinates: []float64{139, 35}}, Properties: json.RawMessage(`{}`)},
 	}
 	for name, f := range cases {
-		if _, err := f.ToLocation(); err == nil {
+		if _, err := f.ToLocation(""); err == nil {
 			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestToLocationDeviceIDFallback(t *testing.T) {
+	feature := func(props string) Feature {
+		return Feature{
+			Geometry:   Geometry{Type: "Point", Coordinates: []float64{139.7671, 35.6812}},
+			Properties: json.RawMessage(props),
+		}
+	}
+	cases := []struct {
+		name, props, batchID, want string
+	}{
+		{"batch level only", `{"timestamp":"2026-09-29T01:02:03Z"}`, "colota", "colota"},
+		{"feature wins", `{"timestamp":"2026-09-29T01:02:03Z","device_id":"phone"}`, "colota", "phone"},
+		{"neither", `{"timestamp":"2026-09-29T01:02:03Z"}`, "", ""},
+	}
+	for _, c := range cases {
+		loc, err := feature(c.props).ToLocation(c.batchID)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if loc.DeviceID != c.want {
+			t.Errorf("%s: device_id %q, want %q", c.name, loc.DeviceID, c.want)
 		}
 	}
 }

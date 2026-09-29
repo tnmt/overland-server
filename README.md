@@ -26,6 +26,8 @@ https://example.com/api/overland?access_token=<token>
   `current` and `trip` are ignored.
 - On success the server responds `{"result":"ok"}`, which is what makes Overland
   drop the batch from its on-device queue. Any other response makes it retry.
+- `device_id` is read from each feature's `properties`, falling back to a
+  top-level `device_id` next to `locations` (as sent by Colota).
 - Points are deduplicated on `(device_id, timestamp)`, so resent batches are
   harmless.
 - Individual points that cannot be parsed are logged and skipped instead of

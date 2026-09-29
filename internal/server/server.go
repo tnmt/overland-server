@@ -54,7 +54,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// every later upload from the device.
 	locs := make([]overland.Location, 0, len(batch.Locations))
 	for i, f := range batch.Locations {
-		loc, err := f.ToLocation()
+		loc, err := f.ToLocation(batch.DeviceID)
 		if err != nil {
 			s.logger.Warn("skipping invalid location", "index", i, "err", err)
 			continue
