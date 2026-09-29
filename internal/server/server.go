@@ -48,6 +48,12 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	// Answering "ok" to a payload in another client's format would make that
+	// client drop its queue silently, so a misconfigured client must see an error.
+	if batch.Locations == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing locations"})
+		return
+	}
 
 	// Malformed points are dropped rather than failing the batch: Overland
 	// keeps retrying a rejected batch forever, so one bad point would block

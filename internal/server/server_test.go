@@ -98,10 +98,21 @@ func TestIngestStoresAndDeduplicates(t *testing.T) {
 	}
 }
 
-func TestIngestRejectsMalformedJSON(t *testing.T) {
+func TestIngestRejectsNonOverlandBodies(t *testing.T) {
 	ts, _ := newTestServer(t)
-	status, _ := post(t, ts.URL+"/api/overland?access_token="+testToken, "", "{")
-	if status != http.StatusBadRequest {
-		t.Errorf("status %d, want 400", status)
+	url := ts.URL + "/api/overland?access_token=" + testToken
+
+	for name, body := range map[string]string{
+		"malformed json":    "{",
+		"missing locations": `{"_type":"location","lat":35.68,"lon":139.76,"tst":1790000000}`,
+		"null locations":    `{"locations":null}`,
+	} {
+		if status, _ := post(t, url, "", body); status != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, status)
+		}
+	}
+
+	if status, body := post(t, url, "", `{"locations":[]}`); status != http.StatusOK || body != `{"result":"ok"}` {
+		t.Errorf("empty batch: got %d %s, want 200 ok", status, body)
 	}
 }

@@ -30,6 +30,8 @@ https://example.com/api/overland?access_token=<token>
   top-level `device_id` next to `locations` (as sent by Colota).
 - Points are deduplicated on `(device_id, timestamp)`, so resent batches are
   harmless.
+- A body without a `locations` array is rejected with 400, so a client sending
+  another format sees an error instead of silently discarding its queue.
 - Individual points that cannot be parsed are logged and skipped instead of
   failing the batch, because a rejected batch would be retried forever and block
   all later uploads.
