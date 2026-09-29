@@ -25,5 +25,6 @@ buildGoModule {
   meta = {
     description = "Self-hosted receiver for the Overland iOS location logger";
     mainProgram = "overland-server";
+    license = lib.licenses.mit;
   };
 }

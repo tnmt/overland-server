@@ -81,3 +81,7 @@ go test ./...
 
 The SQLite driver is the pure-Go `modernc.org/sqlite`, so the build needs no C
 toolchain (`CGO_ENABLED=0`).
+
+## License
+
+MIT
