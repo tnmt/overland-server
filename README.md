@@ -1,14 +1,10 @@
 # overland-server
 
-A small self-hosted receiver for [Overland](https://overland.p3k.app/), the iOS
-background location logger. It accepts Overland's batch uploads and stores every
-point in SQLite so the history can later be queried per day (for example by an
-Obsidian Daily Note side panel).
-
-## Status
-
-Ingest only. A read API (stays / places per local date) is planned once enough
-real data has accumulated to tune stay detection.
+A small self-hosted receiver for [Overland](https://overland.p3k.app/)-format
+location uploads (the Overland iOS app, Colota or GPSLogger on Android). It
+stores every point in SQLite, imports past Google Maps Timeline exports, and
+answers "where was I on this date" for tools such as an Obsidian Daily Note
+side panel.
 
 ## API
 
@@ -36,20 +32,84 @@ https://example.com/api/overland?access_token=<token>
   failing the batch, because a rejected batch would be retried forever and block
   all later uploads.
 
+### `GET /api/days/{date}`
+
+Enabled only when a read token is configured, and accepts that token only as
+`Authorization: Bearer <token>` (never as a query parameter). `{date}` is
+`YYYY-MM-DD` in the configured time zone.
+
+```json
+{
+  "date": "2026-09-30",
+  "timezone": "Asia/Tokyo",
+  "stays": [
+    {
+      "start": "2026-09-29T22:00:00+09:00",
+      "end": "2026-09-30T08:30:00+09:00",
+      "latitude": 35.0,
+      "longitude": 139.0,
+      "source": "google-timeline",
+      "google_place_id": "ChIJ...",
+      "semantic_type": "HOME",
+      "place": {"id": 1, "name": "Home"}
+    }
+  ],
+  "moves": [
+    {
+      "start": "2026-09-30T08:30:00+09:00",
+      "end": "2026-09-30T09:10:00+09:00",
+      "mode": "IN_TRAIN",
+      "distance_meters": 7000,
+      "source": "google-timeline"
+    }
+  ]
+}
+```
+
+- Stays overlapping the date are returned with their full time range, so the
+  first one usually starts the previous evening.
+- Up to the end of the latest Google Timeline import, stays and moves come
+  from the import (`source: "google-timeline"`). After that, stays are
+  detected from recorded points (`source: "recorded"`): points within 100 m
+  of each other for at least 10 minutes, bridging gaps of up to 2 hours.
+  Points with a reported accuracy of 0 or worse than 50 m are ignored.
+  Detected stays inherit the Google place ID of a previously imported visit
+  within 50 m. Moves are only available from imports.
+- `place` is a user-named place (see below), or `null`.
+
 ### `GET /healthz`
 
 Returns `{"status":"ok"}` when the database is reachable.
 
 ## Storage
 
-One `locations` table. Frequently used properties get their own columns; the
-full original `properties` object is kept as JSON so new columns can be
-backfilled later.
+- `locations`: recorded points. Frequently used properties get their own
+  columns; the full original `properties` object is kept as JSON so new columns
+  can be backfilled later.
+- `visits`, `activities`: stays and journeys imported from Google Timeline.
+- `places`: user-named places. A stay matches a place by `google_place_id`
+  first, then by being within `radius_meters` of it. There is no API for
+  editing them yet; insert rows with `sqlite3`.
+
+## Importing Google Timeline
+
+Export the timeline on the phone (Settings > Location > Timeline > Export
+timeline data), which produces a JSON file with `semanticSegments`, then:
+
+```
+overland-server import-google-timeline -db overland.db first.json second.json
+```
+
+Re-importing is safe. When exports overlap in time (e.g. several Google
+accounts on one phone), earlier files win: a segment that overlaps anything
+already stored is skipped as a whole.
 
 ## Running
 
 ```
-overland-server -listen 127.0.0.1:8080 -db overland.db -ingest-token-file token.txt
+overland-server -listen 127.0.0.1:8080 -db overland.db \
+  -ingest-token-file ingest-token.txt -read-token-file read-token.txt \
+  -timezone Asia/Tokyo
 ```
 
 ## NixOS
@@ -64,6 +124,8 @@ overland-server -listen 127.0.0.1:8080 -db overland.db -ingest-token-file token.
     enable = true;
     listenAddress = "127.0.0.1:8095";
     ingestTokenFile = "/run/secrets/overland_ingest_token";
+    readTokenFile = "/run/secrets/overland_read_token"; # optional
+    timezone = "Asia/Tokyo";
   };
 }
 ```

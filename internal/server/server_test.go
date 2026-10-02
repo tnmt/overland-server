@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnmt/overland-server/internal/store"
 )
@@ -34,7 +35,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ts := httptest.NewServer(New(st, testToken, logger).Handler())
+	ts := httptest.NewServer(New(st, Config{IngestToken: testToken}, logger).Handler())
 	t.Cleanup(ts.Close)
 	return ts, st
 }
@@ -115,5 +116,57 @@ func TestIngestRejectsNonOverlandBodies(t *testing.T) {
 
 	if status, body := post(t, url, "", `{"locations":[]}`); status != http.StatusOK || body != `{"result":"ok"}` {
 		t.Errorf("empty batch: got %d %s, want 200 ok", status, body)
+	}
+}
+
+func TestDayEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := Config{IngestToken: testToken, ReadToken: "read-token", Days: st, Location: time.FixedZone("JST", 9*3600)}
+	ts := httptest.NewServer(New(st, cfg, logger).Handler())
+	t.Cleanup(ts.Close)
+
+	get := func(path, auth string) int {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	cases := []struct {
+		name, path, auth string
+		want             int
+	}{
+		{"ok", "/api/days/2026-09-30", "Bearer read-token", http.StatusOK},
+		{"ingest token cannot read", "/api/days/2026-09-30", "Bearer " + testToken, http.StatusUnauthorized},
+		{"query token rejected", "/api/days/2026-09-30?access_token=read-token", "", http.StatusUnauthorized},
+		{"bad date", "/api/days/2026-13-01", "Bearer read-token", http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		if got := get(c.path, c.auth); got != c.want {
+			t.Errorf("%s: status %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+func TestDayEndpointDisabledWithoutReadToken(t *testing.T) {
+	ts, _ := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/api/days/2026-09-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status %d, want 404", resp.StatusCode)
 	}
 }

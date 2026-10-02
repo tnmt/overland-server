@@ -31,6 +31,48 @@ CREATE TABLE IF NOT EXISTS locations (
 	UNIQUE (device_id, recorded_at)
 );
 CREATE INDEX IF NOT EXISTS locations_recorded_at ON locations (recorded_at);
+
+-- Stays and journeys from Google Timeline exports. Times are Unix nanoseconds.
+CREATE TABLE IF NOT EXISTS visits (
+	id              INTEGER PRIMARY KEY,
+	source          TEXT    NOT NULL,
+	start_at        INTEGER NOT NULL,
+	end_at          INTEGER NOT NULL,
+	latitude        REAL    NOT NULL,
+	longitude       REAL    NOT NULL,
+	google_place_id TEXT    NOT NULL,
+	semantic_type   TEXT    NOT NULL,
+	hierarchy_level INTEGER NOT NULL,
+	probability     REAL    NOT NULL,
+	UNIQUE (start_at, end_at, google_place_id, hierarchy_level)
+);
+CREATE INDEX IF NOT EXISTS visits_end_at ON visits (end_at);
+
+CREATE TABLE IF NOT EXISTS activities (
+	id              INTEGER PRIMARY KEY,
+	source          TEXT    NOT NULL,
+	start_at        INTEGER NOT NULL,
+	end_at          INTEGER NOT NULL,
+	start_latitude  REAL    NOT NULL,
+	start_longitude REAL    NOT NULL,
+	end_latitude    REAL    NOT NULL,
+	end_longitude   REAL    NOT NULL,
+	mode            TEXT    NOT NULL,
+	distance_meters REAL    NOT NULL,
+	UNIQUE (start_at, end_at, mode)
+);
+CREATE INDEX IF NOT EXISTS activities_end_at ON activities (end_at);
+
+-- User-named places. A stay matches a place by Google place ID first, then by
+-- distance within radius_meters.
+CREATE TABLE IF NOT EXISTS places (
+	id              INTEGER PRIMARY KEY,
+	name            TEXT    NOT NULL,
+	latitude        REAL    NOT NULL,
+	longitude       REAL    NOT NULL,
+	radius_meters   REAL    NOT NULL DEFAULT 100,
+	google_place_id TEXT    UNIQUE
+);
 `
 
 type Store struct {

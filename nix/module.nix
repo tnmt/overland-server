@@ -28,6 +28,21 @@ in
         Read through systemd credentials, so it may be owned by root.
       '';
     };
+
+    readTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        File containing the bearer token for the read API
+        (`GET /api/days/{date}`). The read API is disabled when null.
+      '';
+    };
+
+    timezone = lib.mkOption {
+      type = lib.types.str;
+      default = "Asia/Tokyo";
+      description = "IANA time zone that defines calendar days for the read API.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -36,16 +51,27 @@ in
       after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
-        ExecStart = lib.escapeShellArgs [
-          (lib.getExe cfg.package)
-          "-listen"
-          cfg.listenAddress
-          "-db"
-          "/var/lib/overland-server/overland.db"
-          "-ingest-token-file"
-          "%d/ingest-token"
-        ];
-        LoadCredential = [ "ingest-token:${cfg.ingestTokenFile}" ];
+        ExecStart = lib.escapeShellArgs (
+          [
+            (lib.getExe cfg.package)
+            "-listen"
+            cfg.listenAddress
+            "-db"
+            "/var/lib/overland-server/overland.db"
+            "-ingest-token-file"
+            "%d/ingest-token"
+            "-timezone"
+            cfg.timezone
+          ]
+          ++ lib.optionals (cfg.readTokenFile != null) [
+            "-read-token-file"
+            "%d/read-token"
+          ]
+        );
+        LoadCredential = [
+          "ingest-token:${cfg.ingestTokenFile}"
+        ]
+        ++ lib.optional (cfg.readTokenFile != null) "read-token:${cfg.readTokenFile}";
         DynamicUser = true;
         StateDirectory = "overland-server";
         StateDirectoryMode = "0700";
