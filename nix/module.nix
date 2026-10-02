@@ -38,6 +38,17 @@ in
       '';
     };
 
+    writeTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        File containing the bearer token for editing places
+        (`POST /api/places`, `PATCH`/`DELETE /api/places/{id}`). It grants no
+        read access and must differ from the read token. Editing is disabled
+        when null.
+      '';
+    };
+
     timezone = lib.mkOption {
       type = lib.types.str;
       default = "Asia/Tokyo";
@@ -67,11 +78,16 @@ in
             "-read-token-file"
             "%d/read-token"
           ]
+          ++ lib.optionals (cfg.writeTokenFile != null) [
+            "-write-token-file"
+            "%d/write-token"
+          ]
         );
         LoadCredential = [
           "ingest-token:${cfg.ingestTokenFile}"
         ]
-        ++ lib.optional (cfg.readTokenFile != null) "read-token:${cfg.readTokenFile}";
+        ++ lib.optional (cfg.readTokenFile != null) "read-token:${cfg.readTokenFile}"
+        ++ lib.optional (cfg.writeTokenFile != null) "write-token:${cfg.writeTokenFile}";
         DynamicUser = true;
         StateDirectory = "overland-server";
         StateDirectoryMode = "0700";

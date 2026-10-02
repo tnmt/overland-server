@@ -39,6 +39,7 @@ func serve(args []string) error {
 	dbPath := fs.String("db", "overland.db", "SQLite database path")
 	ingestTokenFile := fs.String("ingest-token-file", "", "file containing the token Overland must present")
 	readTokenFile := fs.String("read-token-file", "", "file containing the token for the read API; the API is disabled when unset")
+	writeTokenFile := fs.String("write-token-file", "", "file containing the token for editing places; editing is disabled when unset")
 	tz := fs.String("timezone", "Asia/Tokyo", "time zone that defines calendar days")
 	fs.Parse(args)
 
@@ -55,6 +56,15 @@ func serve(args []string) error {
 			return fmt.Errorf("read token: %w", err)
 		}
 	}
+	var writeTok string
+	if *writeTokenFile != "" {
+		if writeTok, err = readToken(*writeTokenFile); err != nil {
+			return fmt.Errorf("write token: %w", err)
+		}
+	}
+	if readTok != "" && readTok == writeTok {
+		return errors.New("read and write tokens must differ")
+	}
 	loc, err := time.LoadLocation(*tz)
 	if err != nil {
 		return fmt.Errorf("timezone: %w", err)
@@ -68,7 +78,10 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 
-	cfg := server.Config{IngestToken: ingestToken, ReadToken: readTok, Days: st, Location: loc}
+	cfg := server.Config{
+		IngestToken: ingestToken, ReadToken: readTok, WriteToken: writeTok,
+		Days: st, Places: st, Location: loc,
+	}
 	srv := &http.Server{
 		Addr:              *listen,
 		Handler:           server.New(st, cfg, logger).Handler(),
@@ -81,7 +94,7 @@ func serve(args []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("listening", "addr", *listen, "read_api", readTok != "")
+		logger.Info("listening", "addr", *listen, "read_api", readTok != "", "write_api", writeTok != "")
 		errCh <- srv.ListenAndServe()
 	}()
 

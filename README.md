@@ -32,10 +32,20 @@ https://example.com/api/overland?access_token=<token>
   failing the batch, because a rejected batch would be retried forever and block
   all later uploads.
 
+### Tokens
+
+Besides the ingest token, two optional bearer tokens enable the rest of the
+API. Both are accepted only as `Authorization: Bearer <token>`, never as a
+query parameter, and neither grants the other's access:
+
+- the **read token** enables `GET /api/days/{date}`, `GET /api/places` and
+  `GET /api/places/unnamed`;
+- the **write token** enables `POST /api/places`, `PATCH /api/places/{id}` and
+  `DELETE /api/places/{id}`. It must differ from the read token.
+
 ### `GET /api/days/{date}`
 
-Enabled only when a read token is configured, and accepts that token only as
-`Authorization: Bearer <token>` (never as a query parameter). `{date}` is
+ `{date}` is
 `YYYY-MM-DD` in the configured time zone.
 
 ```json
@@ -77,6 +87,45 @@ Enabled only when a read token is configured, and accepts that token only as
   within 50 m. Moves are only available from imports.
 - `place` is a user-named place (see below), or `null`.
 
+### Places
+
+`GET /api/places` lists registered places, with the number of imported visits
+carrying each Google place ID:
+
+```json
+{"places": [{"id": 1, "name": "Home", "latitude": 35.0, "longitude": 139.0,
+  "radius_meters": 100, "google_place_id": "ChIJ...", "visits": 120,
+  "maps_url": "https://www.google.com/maps/place/?q=place_id:ChIJ..."}]}
+```
+
+`GET /api/places/unnamed?limit=50` lists Google place IDs from imported visits
+that no place carries yet, most visited first (`limit` 1-500):
+
+```json
+{"places": [{"google_place_id": "ChIJ...", "semantic_type": "UNKNOWN",
+  "visits": 42, "hours": 31.5, "last_visit": "2026-09-10",
+  "latitude": 35.0, "longitude": 139.0, "maps_url": "..."}]}
+```
+
+`POST /api/places` names a place and returns it (201 when created, 200 when an
+existing entry for the same Google place ID was updated):
+
+```json
+{"name": "Cafe", "google_place_id": "ChIJ..."}
+{"name": "Bench by the river", "latitude": 35.0, "longitude": 139.0, "radius_meters": 30}
+```
+
+- With `google_place_id`, any existing entry for that ID is replaced, so
+  posting again corrects a wrong name. Coordinates may be omitted and are then
+  taken from the imported visits (422 if there are none). Radius defaults to
+  100 m.
+- Without it, `latitude` and `longitude` are required and a new entry is
+  always added. Radius defaults to 50 m, since such a place is matched by
+  distance alone.
+
+`PATCH /api/places/{id}` changes `name` and/or `radius_meters`.
+`DELETE /api/places/{id}` removes a place (204).
+
 ### `GET /healthz`
 
 Returns `{"status":"ok"}` when the database is reachable.
@@ -90,8 +139,7 @@ Returns `{"status":"ok"}` when the database is reachable.
 - `places`: user-named places. A stay matches a place by `google_place_id`
   first. Stays detected from recorded points also match the nearest place
   within its `radius_meters`; imported visits that carry their own Google place
-  ID do not, so a neighbouring shop is not given a registered place's name. There is no API for
-  editing them yet; insert rows with `sqlite3`.
+  ID do not, so a neighbouring shop is not given a registered place's name.
 
 ## Importing Google Timeline
 
@@ -111,6 +159,7 @@ already stored is skipped as a whole.
 ```
 overland-server -listen 127.0.0.1:8080 -db overland.db \
   -ingest-token-file ingest-token.txt -read-token-file read-token.txt \
+  -write-token-file write-token.txt \
   -timezone Asia/Tokyo
 ```
 
@@ -127,6 +176,7 @@ overland-server -listen 127.0.0.1:8080 -db overland.db \
     listenAddress = "127.0.0.1:8095";
     ingestTokenFile = "/run/secrets/overland_ingest_token";
     readTokenFile = "/run/secrets/overland_read_token"; # optional
+    writeTokenFile = "/run/secrets/overland_write_token"; # optional
     timezone = "Asia/Tokyo";
   };
 }

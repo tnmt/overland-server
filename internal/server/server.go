@@ -23,10 +23,15 @@ type LocationStore interface {
 
 type Config struct {
 	IngestToken string
-	// ReadToken enables GET /api/days/{date}; empty disables it.
+	// ReadToken enables the read API (days and place listings); empty
+	// disables it.
 	ReadToken string
-	Days      days.Source
-	Location  *time.Location
+	// WriteToken enables registering, editing and deleting places; empty
+	// disables it. It grants no read access, and ReadToken grants no writes.
+	WriteToken string
+	Days       days.Source
+	Places     PlaceStore
+	Location   *time.Location
 }
 
 type Server struct {
@@ -44,8 +49,19 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/overland", s.handleIngest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	read := func(h http.HandlerFunc) http.HandlerFunc { return s.requireToken(s.cfg.ReadToken, h) }
+	write := func(h http.HandlerFunc) http.HandlerFunc { return s.requireToken(s.cfg.WriteToken, h) }
 	if s.cfg.ReadToken != "" {
-		mux.HandleFunc("GET /api/days/{date}", s.handleDay)
+		mux.HandleFunc("GET /api/days/{date}", read(s.handleDay))
+		if s.cfg.Places != nil {
+			mux.HandleFunc("GET /api/places", read(s.handleListPlaces))
+			mux.HandleFunc("GET /api/places/unnamed", read(s.handleUnnamedPlaces))
+		}
+	}
+	if s.cfg.WriteToken != "" && s.cfg.Places != nil {
+		mux.HandleFunc("POST /api/places", write(s.handleCreatePlace))
+		mux.HandleFunc("PATCH /api/places/{id}", write(s.handleUpdatePlace))
+		mux.HandleFunc("DELETE /api/places/{id}", write(s.handleDeletePlace))
 	}
 	return mux
 }
@@ -110,11 +126,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
-	if !tokenMatches(bearerToken(r), s.cfg.ReadToken) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
+// requireToken accepts only "Authorization: Bearer <want>", never a query
+// parameter, keeping these tokens out of access logs.
+func (s *Server) requireToken(want string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !tokenMatches(bearerToken(r), want) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		h(w, r)
 	}
+}
+
+func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 	date, err := time.ParseInLocation(time.DateOnly, r.PathValue("date"), s.cfg.Location)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "date must be YYYY-MM-DD"})
@@ -131,7 +155,6 @@ func (s *Server) handleDay(w http.ResponseWriter, r *http.Request) {
 
 // Overland can only be configured with a receiver URL, so the ingest token is
 // accepted as an access_token query parameter as well as a bearer header.
-// The read API takes the header only, keeping its token out of access logs.
 func ingestAuthorized(r *http.Request, want string) bool {
 	token := r.URL.Query().Get("access_token")
 	if bearer := bearerToken(r); bearer != "" {
