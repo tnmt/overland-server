@@ -215,7 +215,49 @@ func TestBuildDoesNotNameImportedVisitsByDistance(t *testing.T) {
 	if day.Stays[0].Place != nil {
 		t.Errorf("imported visit with its own place ID was named %q", day.Stays[0].Place.Name)
 	}
-	if day.Stays[1].Place == nil || day.Stays[1].Place.Name != "Office" {
-		t.Errorf("recorded stay should still match by distance, got %+v", day.Stays[1].Place)
+	// The recorded stay sits on the shop's earlier visit, which is closer
+	// than the office, so it is left unnamed as well.
+	if day.Stays[1].Place != nil || day.Stays[1].GooglePlaceID != "g-shop" {
+		t.Errorf("recorded stay at the shop = %+v (place %+v), want unnamed with g-shop", day.Stays[1], day.Stays[1].Place)
+	}
+}
+
+func TestBuildPrefersCloserUnnamedVisitOverFartherPlace(t *testing.T) {
+	const deg10m = 0.00009
+	st, path := newStore(t)
+	ctx := context.Background()
+	// A restaurant visited before (unregistered), and a registered shop 40 m
+	// away from it.
+	exp := timeline.Export{Visits: []timeline.Visit{
+		{Start: jst(1, 12, 0), End: jst(1, 13, 0), Latitude: homeLat, Longitude: homeLon, PlaceID: "g-restaurant"},
+	}}
+	if _, err := st.InsertTimeline(ctx, exp, SourceTimeline); err != nil {
+		t.Fatal(err)
+	}
+	addPlace(t, path, "Shop", homeLat+4*deg10m, homeLon, "g-shop")
+	addPlace(t, path, "Gym", officeLat+3*deg10m, officeLon, "")
+	// Another place ID inside the gym's building, only 10 m nearer than the
+	// gym's registered position: within GPS noise, so the gym still wins.
+	if _, err := st.InsertTimeline(ctx, timeline.Export{Visits: []timeline.Visit{
+		{Start: jst(2, 12, 0), End: jst(2, 13, 0), Latitude: officeLat - 2*deg10m, Longitude: officeLon, PlaceID: "g-gym-annex"},
+	}}, SourceTimeline); err != nil {
+		t.Fatal(err)
+	}
+
+	recordMinutes(t, st, jst(30, 12, 0), jst(30, 13, 0), homeLat, homeLon, 10)
+	recordMinutes(t, st, jst(30, 15, 0), jst(30, 16, 0), officeLat, officeLon, 10)
+
+	day, err := Build(ctx, st, jst(30, 0, 0), tokyo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(day.Stays) != 2 {
+		t.Fatalf("got %d stays, want 2: %+v", len(day.Stays), day.Stays)
+	}
+	if p := day.Stays[0].Place; p != nil || day.Stays[0].GooglePlaceID != "g-restaurant" {
+		t.Errorf("restaurant stay = %+v (place %+v), want unnamed with g-restaurant", day.Stays[0], p)
+	}
+	if p := day.Stays[1].Place; p == nil || p.Name != "Gym" {
+		t.Errorf("gym stay place = %+v, want Gym", p)
 	}
 }

@@ -18,7 +18,7 @@ type Source interface {
 	Activities(ctx context.Context, from, to time.Time) ([]timeline.Activity, error)
 	Points(ctx context.Context, from, to time.Time, maxAccuracy float64) ([]stays.Point, error)
 	Places(ctx context.Context) ([]store.Place, error)
-	NearestVisit(ctx context.Context, lat, lon, radius float64) (timeline.Visit, bool, error)
+	NearestVisit(ctx context.Context, lat, lon, radius float64) (timeline.Visit, float64, bool, error)
 }
 
 const (
@@ -33,6 +33,12 @@ const (
 	// visitMatchRadius is how close a detected stay must be to a previously
 	// imported visit to inherit its Google place ID.
 	visitMatchRadius = 50.0
+	// unnamedVisitMargin is how much closer an inherited but unnamed visit
+	// must be than the nearest registered place before the stay is left
+	// unnamed. It is about the median accuracy of recorded points, so that
+	// two place IDs inside one large building do not count as different
+	// places.
+	unnamedVisitMargin = 20.0
 )
 
 type Day struct {
@@ -51,6 +57,10 @@ type Stay struct {
 	GooglePlaceID string    `json:"google_place_id,omitempty"`
 	SemanticType  string    `json:"semantic_type,omitempty"`
 	Place         *PlaceRef `json:"place"`
+
+	// visitDistance is how far the imported visit whose place ID a recorded
+	// stay inherited lies from it; negative when nothing was inherited.
+	visitDistance float64
 }
 
 type PlaceRef struct {
@@ -125,14 +135,14 @@ func Build(ctx context.Context, src Source, date time.Time, loc *time.Location) 
 		}
 		s := Stay{
 			Start: gap.start, End: gap.end, Latitude: st.Latitude, Longitude: st.Longitude,
-			Source: SourceRecorded,
+			Source: SourceRecorded, visitDistance: -1,
 		}
-		v, ok, err := src.NearestVisit(ctx, st.Latitude, st.Longitude, visitMatchRadius)
+		v, dist, ok, err := src.NearestVisit(ctx, st.Latitude, st.Longitude, visitMatchRadius)
 		if err != nil {
 			return day, err
 		}
 		if ok {
-			s.GooglePlaceID, s.SemanticType = v.PlaceID, v.SemanticType
+			s.GooglePlaceID, s.SemanticType, s.visitDistance = v.PlaceID, v.SemanticType, dist
 		}
 		day.Stays = append(day.Stays, s)
 	}
@@ -172,6 +182,12 @@ func matchPlace(s Stay, places []store.Place) *PlaceRef {
 		if d <= p.RadiusMeters && d < bestDist {
 			best, bestDist = &PlaceRef{ID: p.ID, Name: p.Name}, d
 		}
+	}
+	// An unnamed place visited before is clearly closer than any registered
+	// one: the stay was most likely there (a shop next to a registered one),
+	// so leave it unnamed rather than borrow the farther neighbour's name.
+	if s.visitDistance >= 0 && s.visitDistance+unnamedVisitMargin < bestDist {
+		return nil
 	}
 	return best
 }

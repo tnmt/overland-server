@@ -254,9 +254,10 @@ FROM places ORDER BY id`)
 }
 
 // NearestVisit finds the closest top-level imported visit within radius
-// meters, so that stays detected from recorded points can reuse the Google
-// place ID of a place visited before. ok is false when there is none.
-func (s *Store) NearestVisit(ctx context.Context, lat, lon, radius float64) (v timeline.Visit, ok bool, err error) {
+// meters and its distance, so that stays detected from recorded points can
+// reuse the Google place ID of a place visited before. ok is false when there
+// is none.
+func (s *Store) NearestVisit(ctx context.Context, lat, lon, radius float64) (v timeline.Visit, dist float64, ok bool, err error) {
 	dLat := radius / 111320
 	dLon := radius / (111320 * math.Max(math.Cos(lat*math.Pi/180), 0.01))
 	rows, err := s.db.QueryContext(ctx, `
@@ -266,7 +267,7 @@ WHERE hierarchy_level = 0
   AND latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?`,
 		lat-dLat, lat+dLat, lon-dLon, lon+dLon)
 	if err != nil {
-		return v, false, err
+		return v, 0, false, err
 	}
 	defer rows.Close()
 
@@ -274,14 +275,14 @@ WHERE hierarchy_level = 0
 	for rows.Next() {
 		var c timeline.Visit
 		if err := rows.Scan(&c.Latitude, &c.Longitude, &c.PlaceID, &c.SemanticType); err != nil {
-			return v, false, err
+			return v, 0, false, err
 		}
 		if d := stays.Distance(lat, lon, c.Latitude, c.Longitude); d <= radius && d < best {
 			best, v, ok = d, c, true
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return v, false, err
+		return v, 0, false, err
 	}
-	return v, ok, nil
+	return v, best, ok, nil
 }
