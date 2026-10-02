@@ -88,7 +88,9 @@ Returns `{"status":"ok"}` when the database is reachable.
   can be backfilled later.
 - `visits`, `activities`: stays and journeys imported from Google Timeline.
 - `places`: user-named places. A stay matches a place by `google_place_id`
-  first, then by being within `radius_meters` of it. There is no API for
+  first. Stays detected from recorded points also match the nearest place
+  within its `radius_meters`; imported visits that carry their own Google place
+  ID do not, so a neighbouring shop is not given a registered place's name. There is no API for
   editing them yet; insert rows with `sqlite3`.
 
 ## Importing Google Timeline

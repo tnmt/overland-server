@@ -90,7 +90,7 @@ func TestBuildFillsTimelineGapsWithRecordedPoints(t *testing.T) {
 	// Imprecise fixes elsewhere must not create a stay.
 	recordMinutes(t, st, jst(30, 18, 10), jst(30, 18, 50), 35.2, 139.2, 500)
 
-	addPlace(t, path, "Home", homeLat, homeLon, "")
+	addPlace(t, path, "Home", homeLat, homeLon, "g-home")
 	addPlace(t, path, "Office", 0, 0, "g-office")
 
 	day, err := Build(ctx, st, jst(30, 0, 0), tokyo)
@@ -189,5 +189,33 @@ func TestBuildWithoutImportOrPlaces(t *testing.T) {
 	}
 	if empty.Stays == nil || empty.Moves == nil || len(empty.Stays) != 0 {
 		t.Errorf("empty day should have empty, non-nil slices: %+v", empty)
+	}
+}
+
+func TestBuildDoesNotNameImportedVisitsByDistance(t *testing.T) {
+	st, path := newStore(t)
+	ctx := context.Background()
+	exp := timeline.Export{Visits: []timeline.Visit{
+		// The shop next door: 30 m from the registered office, its own place ID.
+		{Start: jst(30, 12, 0), End: jst(30, 13, 0), Latitude: officeLat + 30*0.000009, Longitude: officeLon, PlaceID: "g-shop"},
+	}}
+	if _, err := st.InsertTimeline(ctx, exp, SourceTimeline); err != nil {
+		t.Fatal(err)
+	}
+	recordMinutes(t, st, jst(30, 14, 0), jst(30, 15, 0), officeLat+30*0.000009, officeLon, 10)
+	addPlace(t, path, "Office", officeLat, officeLon, "g-office")
+
+	day, err := Build(ctx, st, jst(30, 0, 0), tokyo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(day.Stays) != 2 {
+		t.Fatalf("got %d stays, want 2: %+v", len(day.Stays), day.Stays)
+	}
+	if day.Stays[0].Place != nil {
+		t.Errorf("imported visit with its own place ID was named %q", day.Stays[0].Place.Name)
+	}
+	if day.Stays[1].Place == nil || day.Stays[1].Place.Name != "Office" {
+		t.Errorf("recorded stay should still match by distance, got %+v", day.Stays[1].Place)
 	}
 }

@@ -150,6 +150,10 @@ func Build(ctx context.Context, src Source, date time.Time, loc *time.Location) 
 	return day, nil
 }
 
+// matchPlace names a stay by Google place ID first. Only stays detected from
+// recorded points fall back to distance: an imported visit already says which
+// place it was, and a different place ID nearby (the shop next door, another
+// tenant in the same building) must not inherit a registered neighbour's name.
 func matchPlace(s Stay, places []store.Place) *PlaceRef {
 	if s.GooglePlaceID != "" {
 		for _, p := range places {
@@ -157,6 +161,9 @@ func matchPlace(s Stay, places []store.Place) *PlaceRef {
 				return &PlaceRef{ID: p.ID, Name: p.Name}
 			}
 		}
+	}
+	if s.Source == SourceTimeline && s.GooglePlaceID != "" {
+		return nil
 	}
 	var best *PlaceRef
 	bestDist := math.Inf(1)
