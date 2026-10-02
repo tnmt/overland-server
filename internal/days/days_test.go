@@ -67,7 +67,7 @@ func recordMinutes(t *testing.T, st *store.Store, from, to time.Time, lat, lon, 
 	}
 }
 
-func TestBuildUsesTimelineThenRecordedPoints(t *testing.T) {
+func TestBuildFillsTimelineGapsWithRecordedPoints(t *testing.T) {
 	st, path := newStore(t)
 	ctx := context.Background()
 
@@ -84,7 +84,7 @@ func TestBuildUsesTimelineThenRecordedPoints(t *testing.T) {
 	if _, err := st.InsertTimeline(ctx, exp, SourceTimeline); err != nil {
 		t.Fatal(err)
 	}
-	// After the import ends at 12:00: still at the office, then home again.
+	// The timeline has nothing after 12:00: still at the office, then home.
 	recordMinutes(t, st, jst(30, 12, 1), jst(30, 18, 0), officeLat, officeLon, 15)
 	recordMinutes(t, st, jst(30, 19, 0), jst(30, 23, 0), homeLat, homeLon, 15)
 	// Imprecise fixes elsewhere must not create a stay.
@@ -129,6 +129,45 @@ func TestBuildUsesTimelineThenRecordedPoints(t *testing.T) {
 	}
 	if day.Date != "2026-09-30" {
 		t.Errorf("date = %q", day.Date)
+	}
+}
+
+func TestBuildPrefersTimelineWhereBothExist(t *testing.T) {
+	st, _ := newStore(t)
+	ctx := context.Background()
+	// The import covers the morning, misses 12:00-15:00, and covers the
+	// evening; points were recorded all day.
+	exp := timeline.Export{Visits: []timeline.Visit{
+		{Start: jst(30, 8, 0), End: jst(30, 12, 0), Latitude: officeLat, Longitude: officeLon, PlaceID: "g-office"},
+		{Start: jst(30, 15, 0), End: jst(30, 18, 0), Latitude: officeLat, Longitude: officeLon, PlaceID: "g-office"},
+	}}
+	if _, err := st.InsertTimeline(ctx, exp, SourceTimeline); err != nil {
+		t.Fatal(err)
+	}
+	recordMinutes(t, st, jst(30, 8, 0), jst(30, 18, 0), officeLat, officeLon, 10)
+
+	day, err := Build(ctx, st, jst(30, 0, 0), tokyo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(day.Stays) != 3 {
+		t.Fatalf("got %d stays, want 3: %+v", len(day.Stays), day.Stays)
+	}
+	mid := day.Stays[1]
+	if mid.Source != SourceRecorded || !mid.Start.Equal(jst(30, 12, 0)) || !mid.End.Equal(jst(30, 15, 0)) {
+		t.Errorf("gap stay = %v-%v %s, want 12:00-15:00 recorded", mid.Start, mid.End, mid.Source)
+	}
+}
+
+func TestLongestUncovered(t *testing.T) {
+	h := func(hour int) time.Time { return jst(30, hour, 0) }
+	covered := []interval{{h(13), h(14)}, {h(9), h(10)}, {h(10), h(11)}}
+	got, ok := longestUncovered(interval{h(8), h(18)}, covered)
+	if !ok || !got.start.Equal(h(14)) || !got.end.Equal(h(18)) {
+		t.Errorf("got %v-%v %v, want 14:00-18:00", got.start, got.end, ok)
+	}
+	if _, ok := longestUncovered(interval{h(9), h(11)}, covered); ok {
+		t.Error("fully covered interval should have no gap")
 	}
 }
 

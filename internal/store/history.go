@@ -153,23 +153,6 @@ func (s intervalSet) overlaps(start, end int64) bool {
 	return k > 0 && s.prefixMaxEnd[k-1] > start
 }
 
-// TimelineCoverageEnd returns the end of the most recent imported segment.
-// Parent visits (hierarchy level 1) are ignored because they can outlast the
-// segments they contain. ok is false when nothing has been imported.
-func (s *Store) TimelineCoverageEnd(ctx context.Context) (end time.Time, ok bool, err error) {
-	var ns sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `
-SELECT max(e) FROM (
-	SELECT max(end_at) AS e FROM visits WHERE hierarchy_level = 0
-	UNION ALL
-	SELECT max(end_at) FROM activities
-)`).Scan(&ns)
-	if err != nil || !ns.Valid {
-		return time.Time{}, false, err
-	}
-	return time.Unix(0, ns.Int64), true, nil
-}
-
 // Visits returns visits at the given hierarchy level that overlap [from, to).
 func (s *Store) Visits(ctx context.Context, from, to time.Time, level int) ([]timeline.Visit, error) {
 	rows, err := s.db.QueryContext(ctx, `

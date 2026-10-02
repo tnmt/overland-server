@@ -68,10 +68,10 @@ Enabled only when a read token is configured, and accepts that token only as
 
 - Stays overlapping the date are returned with their full time range, so the
   first one usually starts the previous evening.
-- Up to the end of the latest Google Timeline import, stays and moves come
-  from the import (`source: "google-timeline"`). After that, stays are
-  detected from recorded points (`source: "recorded"`): points within 100 m
-  of each other for at least 10 minutes, bridging gaps of up to 2 hours.
+- Wherever imported Google Timeline segments exist, stays and moves come from
+  them (`source: "google-timeline"`). Time they leave uncovered is filled with
+  stays detected from recorded points (`source: "recorded"`): points within
+  100 m of each other for at least 10 minutes, bridging gaps of up to 2 hours.
   Points with a reported accuracy of 0 or worse than 50 m are ignored.
   Detected stays inherit the Google place ID of a previously imported visit
   within 50 m. Moves are only available from imports.

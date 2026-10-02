@@ -14,7 +14,6 @@ import (
 )
 
 type Source interface {
-	TimelineCoverageEnd(ctx context.Context) (time.Time, bool, error)
 	Visits(ctx context.Context, from, to time.Time, level int) ([]timeline.Visit, error)
 	Activities(ctx context.Context, from, to time.Time) ([]timeline.Activity, error)
 	Points(ctx context.Context, from, to time.Time, maxAccuracy float64) ([]stays.Point, error)
@@ -67,9 +66,10 @@ type Move struct {
 	Source         string    `json:"source"`
 }
 
-// Build assembles the day containing date in loc. Imported Google Timeline
-// segments are authoritative up to the end of the last import; after that,
-// stays are detected from recorded points.
+// Build assembles the day containing date in loc. Wherever imported Google
+// Timeline segments exist they are used as is; time they leave uncovered
+// (before the first import, after the latest one, or gaps in between) is
+// filled with stays detected from recorded points.
 func Build(ctx context.Context, src Source, date time.Time, loc *time.Location) (Day, error) {
 	y, m, d := date.Date()
 	dayStart := time.Date(y, m, d, 0, 0, 0, 0, loc)
@@ -81,63 +81,60 @@ func Build(ctx context.Context, src Source, date time.Time, loc *time.Location) 
 	if err != nil {
 		return day, err
 	}
-	coverageEnd, imported, err := src.TimelineCoverageEnd(ctx)
+
+	// Recorded points reach back before midnight so that a stay begun the
+	// previous evening is detected with its real start, so the timeline
+	// segments that may cover that time are needed for the same window.
+	windowStart := dayStart.Add(-lookback)
+	visits, err := src.Visits(ctx, windowStart, dayEnd, 0)
+	if err != nil {
+		return day, err
+	}
+	activities, err := src.Activities(ctx, windowStart, dayEnd)
 	if err != nil {
 		return day, err
 	}
 
-	if imported && coverageEnd.After(dayStart) {
-		visits, err := src.Visits(ctx, dayStart, minTime(dayEnd, coverageEnd), 0)
-		if err != nil {
-			return day, err
-		}
-		for _, v := range visits {
+	var covered []interval
+	for _, v := range visits {
+		covered = append(covered, interval{v.Start, v.End})
+		if v.End.After(dayStart) {
 			day.Stays = append(day.Stays, Stay{
 				Start: v.Start, End: v.End, Latitude: v.Latitude, Longitude: v.Longitude,
 				Source: SourceTimeline, GooglePlaceID: v.PlaceID, SemanticType: v.SemanticType,
 			})
 		}
-		activities, err := src.Activities(ctx, dayStart, minTime(dayEnd, coverageEnd))
-		if err != nil {
-			return day, err
-		}
-		for _, a := range activities {
+	}
+	for _, a := range activities {
+		covered = append(covered, interval{a.Start, a.End})
+		if a.End.After(dayStart) {
 			day.Moves = append(day.Moves, Move{
 				Start: a.Start, End: a.End, Mode: a.Mode, DistanceMeters: a.DistanceMeters, Source: SourceTimeline,
 			})
 		}
 	}
 
-	if !imported || coverageEnd.Before(dayEnd) {
-		from := dayStart
-		if imported && coverageEnd.After(from) {
-			from = coverageEnd
+	points, err := src.Points(ctx, windowStart, dayEnd, maxAccuracy)
+	if err != nil {
+		return day, err
+	}
+	for _, st := range stays.Detect(points, stays.DefaultParams) {
+		gap, ok := longestUncovered(interval{st.Start, st.End}, covered)
+		if !ok || gap.end.Sub(gap.start) < stays.DefaultParams.MinDuration || !gap.end.After(dayStart) {
+			continue
 		}
-		pointsFrom := from.Add(-lookback)
-		if imported && coverageEnd.After(pointsFrom) {
-			pointsFrom = coverageEnd
+		s := Stay{
+			Start: gap.start, End: gap.end, Latitude: st.Latitude, Longitude: st.Longitude,
+			Source: SourceRecorded,
 		}
-		points, err := src.Points(ctx, pointsFrom, dayEnd, maxAccuracy)
+		v, ok, err := src.NearestVisit(ctx, st.Latitude, st.Longitude, visitMatchRadius)
 		if err != nil {
 			return day, err
 		}
-		for _, st := range stays.Detect(points, stays.DefaultParams) {
-			if !st.End.After(from) {
-				continue
-			}
-			s := Stay{
-				Start: st.Start, End: st.End, Latitude: st.Latitude, Longitude: st.Longitude,
-				Source: SourceRecorded,
-			}
-			v, ok, err := src.NearestVisit(ctx, st.Latitude, st.Longitude, visitMatchRadius)
-			if err != nil {
-				return day, err
-			}
-			if ok {
-				s.GooglePlaceID, s.SemanticType = v.PlaceID, v.SemanticType
-			}
-			day.Stays = append(day.Stays, s)
+		if ok {
+			s.GooglePlaceID, s.SemanticType = v.PlaceID, v.SemanticType
 		}
+		day.Stays = append(day.Stays, s)
 	}
 
 	for i := range day.Stays {
@@ -172,9 +169,36 @@ func matchPlace(s Stay, places []store.Place) *PlaceRef {
 	return best
 }
 
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
+type interval struct{ start, end time.Time }
+
+// longestUncovered returns the longest part of iv not overlapped by any
+// interval in covered, which need not be sorted.
+func longestUncovered(iv interval, covered []interval) (interval, bool) {
+	sorted := append([]interval(nil), covered...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].start.Before(sorted[j].start) })
+
+	var best interval
+	found := false
+	consider := func(c interval) {
+		if c.end.After(c.start) && (!found || c.end.Sub(c.start) > best.end.Sub(best.start)) {
+			best, found = c, true
+		}
 	}
-	return b
+	cursor := iv.start
+	for _, c := range sorted {
+		if !c.end.After(cursor) || !c.start.Before(iv.end) {
+			continue
+		}
+		if c.start.After(cursor) {
+			consider(interval{cursor, c.start})
+		}
+		cursor = c.end
+		if !cursor.Before(iv.end) {
+			break
+		}
+	}
+	if cursor.Before(iv.end) {
+		consider(interval{cursor, iv.end})
+	}
+	return best, found
 }
